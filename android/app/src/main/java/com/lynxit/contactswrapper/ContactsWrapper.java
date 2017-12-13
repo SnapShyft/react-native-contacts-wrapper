@@ -8,13 +8,22 @@ import android.database.Cursor;
 import android.net.Uri;
 import android.provider.ContactsContract;
 import android.util.Log;
+import android.Manifest;
+import android.content.pm.PackageManager;
+import android.content.SharedPreferences;
+
+import android.support.v4.content.ContextCompat;
+import android.support.v4.app.ActivityCompat;
 
 import java.net.URI;
 import java.util.*;
+import java.util.HashMap;
+import java.util.Map;
 
 import com.facebook.react.*;
 
 import com.facebook.react.ReactPackage;
+import com.facebook.react.bridge.ReactContext;
 import com.facebook.react.bridge.ActivityEventListener;
 import com.facebook.react.bridge.Arguments;
 import com.facebook.react.bridge.NativeModule;
@@ -34,13 +43,18 @@ public class ContactsWrapper extends ReactContextBaseJavaModule implements Activ
 
     private static final int CONTACT_REQUEST = 1;
     private static final int EMAIL_REQUEST = 2;
+    private static int PERMISSION_REQUEST_CODE = 37;
     public static final String E_CONTACT_CANCELLED = "E_CONTACT_CANCELLED";
     public static final String E_CONTACT_NO_DATA = "E_CONTACT_NO_DATA";
     public static final String E_CONTACT_NO_EMAIL = "E_CONTACT_NO_EMAIL";
     public static final String E_CONTACT_EXCEPTION = "E_CONTACT_EXCEPTION";
     public static final String E_CONTACT_PERMISSION = "E_CONTACT_PERMISSION";
     private Promise mContactsPromise;
+    private static final Map<Integer, Promise> permissionsPromises = new HashMap<>();
+    private static final String RNCW_PREFS = "REACT_NATIVE_CONTACTS_WRAPPER";
+
     private Activity mCtx;
+    private final ReactContext reactContext;
     private final ContentResolver contentResolver;
     private static final List<String> JUST_ME_PROJECTION = new ArrayList<String>() {{
         add(ContactsContract.Contacts.Data.MIMETYPE);
@@ -63,7 +77,8 @@ public class ContactsWrapper extends ReactContextBaseJavaModule implements Activ
     public ContactsWrapper(ReactApplicationContext reactContext) {
         super(reactContext);
         this.contentResolver = getReactApplicationContext().getContentResolver();
-        reactContext.addActivityEventListener(this);
+        this.reactContext = reactContext;
+        this.reactContext.addActivityEventListener(this);
     }
 
     @Override
@@ -71,7 +86,70 @@ public class ContactsWrapper extends ReactContextBaseJavaModule implements Activ
         return "ContactsWrapper";
     }
 
+  private void requestCalendarReadWritePermission(final Promise promise)
+  {
+    Activity currentActivity = getCurrentActivity();
+    if (currentActivity == null) {
+      promise.reject("E_ACTIVITY_DOES_NOT_EXIST", "Activity doesn't exist");
+      return;
+    }
+    PERMISSION_REQUEST_CODE++;
 
+    permissionsPromises.put(PERMISSION_REQUEST_CODE, promise);
+    ActivityCompat.requestPermissions(currentActivity, new String[]{
+      Manifest.permission.READ_CONTACTS
+    }, PERMISSION_REQUEST_CODE);
+  }
+
+  public static void onRequestPermissionsResult(int requestCode, String permissions[], int[] grantResults) {
+    if (permissionsPromises.containsKey(requestCode)) {
+
+      // If request is cancelled, the result arrays are empty.
+      Promise permissionsPromise = permissionsPromises.get(requestCode);
+
+      if (grantResults.length > 0 && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
+        permissionsPromise.resolve("authorized");
+      } else if (grantResults.length > 0 && grantResults[0] == PackageManager.PERMISSION_DENIED) {
+        permissionsPromise.resolve("denied");
+      } else if (permissionsPromises.size() == 1) {
+        permissionsPromise.reject("permissions - unknown error", grantResults.length > 0 ? String.valueOf(grantResults[0]) : "Request was cancelled");
+      }
+      permissionsPromises.remove(requestCode);
+    }
+  }
+
+  private boolean haveCalendarReadPermissions() {
+    int permissionCheck = ContextCompat.checkSelfPermission(reactContext, Manifest.permission.READ_CONTACTS);
+    return permissionCheck == PackageManager.PERMISSION_GRANTED;
+  }
+
+  @ReactMethod
+  public void getCalendarPermissions(Promise promise) {
+    SharedPreferences sharedPreferences = reactContext.getSharedPreferences(RNCW_PREFS, ReactContext.MODE_PRIVATE);
+    boolean permissionRequested = sharedPreferences.getBoolean("permissionRequested", false);
+
+    if (this.haveCalendarReadPermissions()) {
+      promise.resolve("authorized");
+    } else if (!permissionRequested) {
+      promise.resolve("undetermined");
+    } else {
+      promise.resolve("denied");
+    }
+  }
+
+  @ReactMethod
+  public void requestCalendarPermissions(Promise promise) {
+    SharedPreferences sharedPreferences = reactContext.getSharedPreferences(RNCW_PREFS, ReactContext.MODE_PRIVATE);
+    SharedPreferences.Editor editor = sharedPreferences.edit();
+    editor.putBoolean("permissionRequested", true);
+    editor.apply();
+
+    if (this.haveCalendarReadPermissions()) {
+      promise.resolve("authorized");
+    } else {
+      this.requestCalendarReadWritePermission(promise);
+    }
+  }
 
     @ReactMethod
     public void getContact(Promise contactsPromise) {
