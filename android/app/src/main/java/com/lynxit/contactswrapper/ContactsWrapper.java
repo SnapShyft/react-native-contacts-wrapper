@@ -12,8 +12,8 @@ import android.Manifest;
 import android.content.pm.PackageManager;
 import android.content.SharedPreferences;
 
-import android.support.v4.content.ContextCompat;
-import android.support.v4.app.ActivityCompat;
+import androidx.core.content.ContextCompat;
+import androidx.core.app.ActivityCompat;
 
 import java.net.URI;
 import java.util.*;
